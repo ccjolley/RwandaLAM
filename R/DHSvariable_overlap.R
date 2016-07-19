@@ -22,7 +22,7 @@ hh_tocheck = hh_labels %>%
 
 uniqueVars = as.character(hh_tocheck$var)
 
-write.csv(hh_tocheck, 'Excel/hh_labels_tokeep.csv')
+write.csv(hh_tocheck, 'Excel/hh_labels_tokeep_original.csv')
 
 
 # women’s module ----------------------------------------------------------
@@ -39,7 +39,7 @@ intersect(hh_tocheck$var, woman_tocheck$var)
 # update growing list of variables
 uniqueVars = c(as.character(uniqueVars), as.character(woman_tocheck$var))
 
-write.csv(woman_tocheck, 'Excel/women_labels_tokeep.csv')
+write.csv(woman_tocheck, 'Excel/women_labels_tokeep_original.csv')
 
 
 
@@ -58,7 +58,7 @@ intersect(kids_tocheck$var,hh_tocheck$var)
 # update growing list of variables
 uniqueVars = c(uniqueVars, kids_tocheck$var)
 
-write.csv(kids_tocheck, 'Excel/kids_labels_tokeep.csv')
+write.csv(kids_tocheck, 'Excel/kids_labels_tokeep_original.csv')
 
 
 # men’s module ------------------------------------------------------------
@@ -72,7 +72,7 @@ mens_tocheck = men_labels %>%
 # update growing list of variables
 uniqueVars = c(uniqueVars, mens_tocheck$var)
 
-write.csv(mens_tocheck, 'Excel/mens_labels_tokeep.csv')
+write.csv(mens_tocheck, 'Excel/mens_labels_tokeep_original.csv')
 
 # -- roster indicators --
 roster_tocheck = roster_labels %>% 
@@ -80,5 +80,5 @@ roster_tocheck = roster_labels %>%
          !var %in% uniqueVars) %>% # Make sure we haven't already examined 
   select(var, varDescrip, module)
 
-write.csv(roster_tocheck, 'Excel/roster_labels_tokeep.csv')
+write.csv(roster_tocheck, 'Excel/roster_labels_tokeep_original.csv')
 

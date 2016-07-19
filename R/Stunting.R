@@ -38,6 +38,7 @@ num_kids_vec[j]<-hh_clean[hh_clean$cluster_hh_num==hhdiff[j],]$num_under5
 # birth order: birth_order
 # wealth index: wealth_index
 # dietary diversity: DietDiv
+# women's stunting
 
 fit <- lm(height_age_zscore~birth_interval_preceding+mother_highest_education_level+sex+age_calc_months+birth_order+wealth_index+DietDiv_WDDS,data=kids_clean) 
 
