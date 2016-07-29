@@ -62,8 +62,24 @@ kids_clean$age_calc_months <- (kids_clean$interview_date_cmc-kids_clean$dob_cmc)
 
 
 ## Replace all 9998 values with NA
-kids_clean <-kids_clean %>% mutate(height_age_zscore = replace(height_age_zscore,
-                                   height_age_zscore==9998, NA))
+kids_clean <-kids_clean %>% 
+  mutate(height_age_zscore = replace(height_age_zscore,
+                                     height_age_zscore==9998, NA),
+         child_milk              = na_if(child_milk,8),
+         child_cereals           = na_if(child_cereals,8),
+         child_tubers            = na_if(child_tubers,8),
+         child_eggs              = na_if(child_eggs,8),
+         child_meat              = na_if(child_meat,8),
+         child_veg_yellow_orange = na_if(child_veg_yellow_orange,8),
+         child_veg_dark_green    = na_if(child_veg_dark_green,8),
+         child_fruit_vit_a       = na_if(child_fruit_vit_a,8),
+         child_fruit_other       = na_if(child_fruit_other,8),
+         child_meat_organ        = na_if(child_meat_organ,8),
+         child_fish              = na_if(child_fish,8),
+         child_legumes_nuts      = na_if(child_legumes_nuts,8),
+         child_milk_products     = na_if(child_milk_products,8),
+         child_other_food        = na_if(child_other_food,8))
+
 
 ## Histogram of the age distribution of the NA values for stunting, doesn't
 ## seem to exhibit a pattern
