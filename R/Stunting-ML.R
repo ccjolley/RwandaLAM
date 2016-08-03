@@ -212,22 +212,37 @@ r <- roc(res2$actual,res2$pred)
 plot(r) # AUC = 0.7205; all those "irrelevant" variables do help (a little); dropping
         # some might lower my AIC
 
-
-
-
+###############################################################################
+# Try stepwise regression to shorten my variable list
+###############################################################################
+library(MASS)
+step1 <- stepAIC(fit1) # good to do this with other imputed sets as well
+fit3 <- glm(stunted ~ cluster_num + dob_cmc + sex + mother_height_age_percentile + 
+              mother_height_age_zscore + mother_ed_year + diet_milk + diet_tubers + 
+              diet_meat + diet_veg_dark_green + diet_fruit_vit_a + diet_fruit_other + 
+              diet_meat_organ + diet_legumes_nuts + diet_other_food + birth_interval_preceding + 
+              birth_order + WDDS_vitA + WDDS_dairy + stunt_geo + num_under5 + 
+              age_head + water_treat_cloth + water_treat_settle + toilet_clean_dry + 
+              wealth_score + livestock + sheep + pig + rabbit + water_prot_spring + 
+              water_spring + water_open + water_piped + water_indoor + 
+              toilet_bush,data=imp1) # AIC = 5189
+res3 <- data.frame(actual=imp1$stunted,pred=predict(fit3))
+r <- roc(res3$actual,res3$pred)
+plot(r) # AUC = 0.7453; performance is almost as good as with the full variable set
 
 ## Random forest
 
 all_vars <- imp1 %>%
   mutate(outcome=ifelse(stunted,'T','F') %>% as.factor) %>%
-  select(-stunted,-cluster_num)
+  dplyr::select(-stunted,-cluster_num)
 
 library(caret)
 Train <- createDataPartition(all_vars$outcome,p=0.75)[[1]]
 training <- all_vars[Train,]
 testing <- all_vars[-Train,]
-log_reg <- train(outcome~.,training,
+rf_model <- train(outcome~.,training,
                  metric='Accuracy') # actually random forest by default
+# taking for-e-ver
 
 ###############################################################################
 # Odds and ends below here
