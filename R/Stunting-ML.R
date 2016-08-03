@@ -177,72 +177,86 @@ scale_vars <- scale_vars %>% arrange(pval)
 # Use multiple imputation to fill in missing values
 ###############################################################################
 
-nrow(na.omit(my_kids)) / nrow(my_kids) # only 15% have no missing values
-# impute based on everything we know about these kids that might be relevant
-kids_imp <- mice(my_kids)
-imp1 <- complete(kids_imp,1) %>% na.omit # couldn't impute everything, it seems
+# No sense in imputing stunting; will just muddy the waters later on
+my_kids <- my_kids %>% filter(!is.na(stunted))
+
+nrow(na.omit(my_kids)) / nrow(my_kids) # only 34% have no missing values
+
+# split into train/test before imputation
+library(caret)
+Train <- createDataPartition(my_kids$stunted,p=0.75)[[1]]
+training <- my_kids[Train,]
+testing <- my_kids[-Train,]
+
+# impute based on everything we know about these kids that might be relevant,
+# *except* stunting.
+pm <- 1 - diag(ncol(my_kids))
+pm[,which(names(my_kids)=='stunting')] <- 0
+train_imp <- mice(training,predictorMatrix=pm)
+test_imp <- mice(testing,predictorMatrix=pm)
+
+(complete(train_imp,1) %>% na.omit %>% nrow) / (complete(train_imp,1) %>% nrow)
+(complete(test_imp,1) %>% na.omit %>% nrow) / (complete(test_imp,1) %>% nrow)
+# now ~60% complete
+
+train_imp1 <- complete(train_imp,1) %>% na.omit 
+test_imp1 <- complete(test_imp,1) %>% na.omit 
 
 ###############################################################################
-# Can I run logistic regression in caret? How much predictive power does it
-# get me if I include everything? What if I leave some things out?
+# Logistic regression
 ###############################################################################
 
-fit1 <- glm(stunted ~ .,data=imp1) # AIC = 5232
-res1 <- data.frame(actual=imp1$stunted,pred=predict(fit1))
+fit1 <- glm(stunted ~ .,data=train_imp1) 
+# TODO: this is klugy -- find a brief way to make them all numeric
+test_imp1$water_treat_boil <- as.numeric(test_imp1$water_treat_boil)
+test_imp1$water_treat_bleach <- as.numeric(test_imp1$water_treat_bleach)
+test_imp1$water_treat_cloth <- as.numeric(test_imp1$water_treat_cloth)
+test_imp1$water_treat_filter <- as.numeric(test_imp1$water_treat_filter)
+test_imp1$water_treat_solar <- as.numeric(test_imp1$water_treat_solar)
+test_imp1$water_treat_settle <- as.numeric(test_imp1$water_treat_settle)
+res1 <- data.frame(actual=test_imp1$stunted,pred=predict(fit1,test_imp1))
+# rank-deficient prediction -- what does this mean? how do I fix it?
 ggplot(res1,aes(pred,actual)) +
   geom_jitter(color='tomato',size=2,alpha=0.1,width=0,height=0.4) +
   geom_smooth(method = "glm", method.args = list(family = "binomial")) +
   theme_classic()
 # Pseudo-R2
 library(pscl)
-pR2(fit1)
+pR2(fit1)   # McFadden pseudo-R^2 = 0.15
 # AUC
 library(pROC)
 r <- roc(res1$actual,res1$pred)
-plot(r) # AUC = 0.7486; I'd like to see it closer to 0.8
-
-# Try with just the significant variables
-fit2 <- glm(stunted ~ electricity+water_treat_boil+urban+water_piped+water_treat+
-              stunt_geo+diet_tubers+toilet_clean_dry+diet_veg_dark_green+
-              diet_legumes_nuts+toilet_bush+toilet_flush+toilet_clean_urine+water_spring+
-              diet_milk+wealth_score+mother_height_age_zscore+
-              mother_ed_level+dob_cmc+WDDS_total,data=imp1) # AIC = 5316
-res2 <- data.frame(actual=imp1$stunted,pred=predict(fit2))
-r <- roc(res2$actual,res2$pred)
-plot(r) # AUC = 0.7205; all those "irrelevant" variables do help (a little); dropping
-        # some might lower my AIC
+plot(r) # AUC = 0.6984; I'd like to see it closer to 0.8
 
 ###############################################################################
 # Try stepwise regression to shorten my variable list
 ###############################################################################
 library(MASS)
 step1 <- stepAIC(fit1) # good to do this with other imputed sets as well
-fit3 <- glm(stunted ~ cluster_num + dob_cmc + sex + mother_height_age_percentile + 
-              mother_height_age_zscore + mother_ed_year + diet_milk + diet_tubers + 
-              diet_meat + diet_veg_dark_green + diet_fruit_vit_a + diet_fruit_other + 
-              diet_meat_organ + diet_legumes_nuts + diet_other_food + birth_interval_preceding + 
-              birth_order + WDDS_vitA + WDDS_dairy + stunt_geo + num_under5 + 
-              age_head + water_treat_cloth + water_treat_settle + toilet_clean_dry + 
-              wealth_score + livestock + sheep + pig + rabbit + water_prot_spring + 
-              water_spring + water_open + water_piped + water_indoor + 
-              toilet_bush,data=imp1) # AIC = 5189
-res3 <- data.frame(actual=imp1$stunted,pred=predict(fit3))
-r <- roc(res3$actual,res3$pred)
-plot(r) # AUC = 0.7453; performance is almost as good as with the full variable set
+fit2 <- glm(stunted ~ interview_date_cmc + dob_cmc + sex + mother_height_age_zscore + 
+              mother_ed_year + diet_milk + diet_tubers + diet_eggs + diet_veg_dark_green + 
+              diet_fruit_other + birth_interval_preceding + birth_order + 
+              stunt_geo + num_under5 + electricity + water_treat_settle + 
+              wealth_score + water_open + toilet_bush + toilet_flush,
+            data=train_imp1)
+# no more complaints about rank deficiency
+res2 <- data.frame(actual=test_imp1$stunted,pred=predict(fit2,test_imp1))
+r <- roc(res2$actual,res2$pred)
+plot(r) # AUC = 0.7 -- cutting down on variables actually improves things a little
 
 ## Random forest
 
-all_vars <- imp1 %>%
+train_label <- train_imp1 %>%
+  mutate(outcome=ifelse(stunted,'T','F') %>% as.factor) %>%
+  dplyr::select(-stunted,-cluster_num)
+test_label <- test_imp1 %>%
   mutate(outcome=ifelse(stunted,'T','F') %>% as.factor) %>%
   dplyr::select(-stunted,-cluster_num)
 
 library(caret)
-Train <- createDataPartition(all_vars$outcome,p=0.75)[[1]]
-training <- all_vars[Train,]
-testing <- all_vars[-Train,]
-rf_model <- train(outcome~.,training,
-                 metric='Accuracy') # actually random forest by default
-# taking for-e-ver
+rf_model <- train(outcome~.,train_label,
+                 metric='Accuracy') # random forest by default
+# started at 
 
 ###############################################################################
 # Odds and ends below here
