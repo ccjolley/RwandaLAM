@@ -9,15 +9,14 @@ source('R/simple_plots.R')
 # and kids_diet
 
 my_kids <- kids_clean %>% 
-  mutate(stunted = height_age_zscore < -2,
-         stunted = as.factor(ifelse(stunted,'T','F')))
+  mutate(stunted = as.numeric(height_age_zscore < -2))
 
 ###############################################################################
 # Add binary variable for high-stunting districts
 ###############################################################################
 tmp <- my_kids[,c('cluster_num','stunted')] %>% 
   na.omit() %>%
-  mutate(val=as.numeric(stunted=='T')) %>% 
+  mutate(val=stunted) %>% 
   plyr::join(geo_clean,by='cluster_num') %>%
   group_by(district) %>%
   dplyr::summarise(yes=sum(val==1),no=sum(val==0)) 
@@ -35,12 +34,10 @@ tmp <- tmp %>%
          pval=sapply(1:nrow(tmp),fisher_pval),
          sig=as.numeric(pval < 0.1/nrow(tmp)))
 # # Visualization: average stunting rates all over
-# my_kids %>% 
-#   mutate(val=as.numeric(stunted=='T')) %>%
-#   adm2_map('val')
+# my_kids %>% adm2_map('stunted')
 # # just pick out the really high ones
-# tmp %>% 
-#   mutate(val=sig,NAME_2=as.character(district)) %>% 
+# tmp %>%
+#   mutate(val=sig,NAME_2=as.character(district)) %>%
 #   make_map(low_color='ivory',high_color='firebrick1')
 # tmp %>% filter(sig==TRUE)
 
@@ -121,10 +118,66 @@ my_kids <- my_kids %>% select(-has_soap,-kitchen)
 # Strongest 1-to-1 correlations? (Prior to any imputation)
 ###############################################################################
 
+# TODO: I don't know why this didn't get fixed in 04_RW_cleanDHS_kids.R
+my_kids$diet_other_food <- na_if(my_kids$diet_other_food,8)
+my_kids$diet_meat <- na_if(my_kids$diet_meat,8)
+my_kids$wealth_score <- my_kids$wealth_score/1e5
+
+# First, which variables take only two unique values
+num_responses <- data.frame(name=names(my_kids),
+                            num=sapply(names(my_kids), function(x) 
+                              my_kids[,x] %>% na.omit %>% unique %>% length),
+                            stringsAsFactors=FALSE) %>% 
+  arrange(desc(num))
+
+binary_vars <- num_responses %>% 
+  filter(num==2)
+binary_vars$cor <- sapply(binary_vars$name,function(x) 
+  cor(my_kids[,x],my_kids$stunted,use='complete.obs'))
+binary_vars$odds <- sapply(binary_vars$name,function(x) 
+  fisher.test(my_kids[,x],my_kids$stunted)$estimate)
+binary_vars$pval <- sapply(binary_vars$name,function(x)
+  fisher.test(my_kids[,x],my_kids$stunted)$p.value)
+# correct for multiple hypothesis testing
+binary_vars$pval <- binary_vars$pval*nrow(binary_vars)
+binary_vars <- binary_vars %>% arrange(pval)
+
+# There's a solid negative correlation with urbanization and electricity access,
+# as well as various types of water treatment (we'd expect this)
+# Some diet components seem to hurt in ways that surprise me: 
+# tubers, dark green veggies, legumes/nuts. Dairy seems to help.
+# Sex doesn't seem to matter much
+
+# Now look at non-binary variables
+scale_vars <- num_responses %>% filter(num>2)
+scale_vars$cor <- sapply(scale_vars$name,function(x) 
+  cor(my_kids[,x],my_kids$stunted,use='complete.obs'))
+scale_vars$est <- sapply(scale_vars$name,function(x) {
+  tt <- t.test(my_kids[my_kids$stunted==TRUE,x],
+               my_kids[my_kids$stunted==FALSE,x])
+  tt$estimate[2] - tt$estimate[1]
+})
+scale_vars$pval <- sapply(scale_vars$name,function(x) {
+  tt <- t.test(my_kids[my_kids$stunted==TRUE,x],
+               my_kids[my_kids$stunted==FALSE,x])
+  tt$p.value
+})
+# correct for multiple hypothesis testing
+scale_vars$pval <- scale_vars$pval*nrow(scale_vars)
+
+
+scale_vars <- scale_vars %>% arrange(pval)
+
+# Wealth matters a lot, as do the mother's height and education level
+# Age matters, though this might be more complicated
+# Dietary diversity helps, as do cows
+# Longer preceding birth intervals and earlier birth order both help
 
 ###############################################################################
 # Use multiple imputation to fill in missing values
 ###############################################################################
+
+
 
 ###############################################################################
 # Odds and ends below here
