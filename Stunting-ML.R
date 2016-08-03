@@ -86,13 +86,13 @@ my_kids <- my_kids %>%
 
 
 ###############################################################################
-# Which variables have a lot of missing values? (Re-use LAPOP code)
+# Which variables have a lot of missing values? 
 ###############################################################################
 
 nm <- is.na(my_kids) %>% colSums() %>% sort(decreasing=TRUE)
 nm <- nm / nrow(my_kids)
 head(nm,15)
-# TODO: Something's not right with dietary diversity; check Nada's code
+
 
 #### What's going on with the missing diet variables?
 cor(is.na(my_kids$child_tubers),is.na(my_kids$child_milk))
@@ -102,20 +102,48 @@ cor(is.na(my_kids$child_tubers),my_kids$wealth_score)
 my_kids %>% mutate(food_na=is.na(child_tubers)) %>%
   adm2_map(.,'food_na')
 # No obvious geographic pattern
+cor(is.na(my_kids$child_tubers),is.na(my_kids$stunted))
+# No correlation with whether measurements were recorded
+cor(is.na(my_kids$child_tubers),as.numeric(my_kids$stunted=='T'),use='complete.obs')
+# No correlation with stunting (when present)
 # I think (tentatively) that it's safe to impute these
 
-# Remove variables that are missing a lot
-my_kids <- 
+# After the dietary variables, the next-most-common missing
+# variable is birth_interval_preceding
+cor(is.na(my_kids$birth_interval_preceding),my_kids$birth_order==1)
+# these are first children; replace NA values with zero
+my_kids[is.na(my_kids$birth_interval_preceding),'birth_interval_preceding'] <- 0
 
-
+# Remove variables that are missing more often than 'stunted'
+my_kids <- my_kids %>%
+  select(-age_death,-has_soap,-kitchen)
 
 ###############################################################################
 # Use multiple imputation to fill in missing values
 ###############################################################################
 
+kids_imp <- mice(my_kids)
+imp1 <- complete(kids_imp,1)
+
 ###############################################################################
-# Strongest 1-to-1 correlations?
+# Strongest 1-to-1 correlations (use un-imputed data at this step)
 ###############################################################################
+
+# First, find all binary variables (use imp1 to avoid NA)
+single_cor <- data.frame(name=names(my_kids)) %>%
+  mutate(uniq = sapply(names(my_kids),function(x) length(unique(imp1[,x]))),
+         pval=NA)
+
+single_cor[single_cor$uniq==2,'pval'] <- 
+  sapply(single_cor[single_cor$uniq==2,'name'],function(x) {
+    print(x)
+    prop.test(my_kids$stunted,my_kids[,x])$p.value
+    })
+
+# TODO: this doesn't work yet. Try fisher.test?
+  
+
+
 
 ###############################################################################
 # Odds and ends below here
