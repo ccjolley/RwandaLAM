@@ -177,7 +177,57 @@ scale_vars <- scale_vars %>% arrange(pval)
 # Use multiple imputation to fill in missing values
 ###############################################################################
 
+nrow(na.omit(my_kids)) / nrow(my_kids) # only 15% have no missing values
+# impute based on everything we know about these kids that might be relevant
+kids_imp <- mice(my_kids)
+imp1 <- complete(kids_imp,1) %>% na.omit # couldn't impute everything, it seems
 
+###############################################################################
+# Can I run logistic regression in caret? How much predictive power does it
+# get me if I include everything? What if I leave some things out?
+###############################################################################
+
+fit1 <- glm(stunted ~ .,data=imp1) # AIC = 5232
+res1 <- data.frame(actual=imp1$stunted,pred=predict(fit1))
+ggplot(res1,aes(pred,actual)) +
+  geom_jitter(color='tomato',size=2,alpha=0.1,width=0,height=0.4) +
+  geom_smooth(method = "glm", method.args = list(family = "binomial")) +
+  theme_classic()
+# Pseudo-R2
+library(pscl)
+pR2(fit1)
+# AUC
+library(pROC)
+r <- roc(res1$actual,res1$pred)
+plot(r) # AUC = 0.7486; I'd like to see it closer to 0.8
+
+# Try with just the significant variables
+fit2 <- glm(stunted ~ electricity+water_treat_boil+urban+water_piped+water_treat+
+              stunt_geo+diet_tubers+toilet_clean_dry+diet_veg_dark_green+
+              diet_legumes_nuts+toilet_bush+toilet_flush+toilet_clean_urine+water_spring+
+              diet_milk+wealth_score+mother_height_age_zscore+
+              mother_ed_level+dob_cmc+WDDS_total,data=imp1) # AIC = 5316
+res2 <- data.frame(actual=imp1$stunted,pred=predict(fit2))
+r <- roc(res2$actual,res2$pred)
+plot(r) # AUC = 0.7205; all those "irrelevant" variables do help (a little); dropping
+        # some might lower my AIC
+
+
+
+
+
+## Random forest
+
+all_vars <- imp1 %>%
+  mutate(outcome=ifelse(stunted,'T','F') %>% as.factor) %>%
+  select(-stunted,-cluster_num)
+
+library(caret)
+Train <- createDataPartition(all_vars$outcome,p=0.75)[[1]]
+training <- all_vars[Train,]
+testing <- all_vars[-Train,]
+log_reg <- train(outcome~.,training,
+                 metric='Accuracy') # actually random forest by default
 
 ###############################################################################
 # Odds and ends below here
