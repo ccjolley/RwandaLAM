@@ -55,13 +55,13 @@ rm(tmp,j)
 # Add relevant household-level variables
 ###############################################################################
 kids_add_hh <- kids_clean %>%
-  dplyr::select(-wealth_index) %>%
-  join(hh_clean,by=c('cluster_num','hh_num')) %>%
+  dplyr::select(-wealth_index,-cluster_num,-hh_num) %>%
+  join(hh_clean,by='cluster_hh_num') %>%
   dplyr::select(num_hh,num_under5,urban,water_source,toilet_type,
                 electricity,age_head,share_toilet,
                 water_treat:water_treat_settle,has_soap,toilet_clean_dry,
                 toilet_clean_urine,toilet_clean_flies,wealth_score,kitchen,
-                ag_land,livestock) %>%
+                ag_land,livestock:bull) %>%
   # add binary variables for most prominent
   mutate(water_prot_spring = as.numeric(water_source==41),
          water_standpipe = as.numeric(water_source==13),
@@ -80,13 +80,13 @@ my_kids <- cbind(my_kids,kids_add_hh)
 
 
 my_kids <- my_kids %>% 
-  select(-weight_kg:-weight_height_std, # Drop other biometrics
-         -caseid,-midx,-hh_num,-hwidx,  # Drop cross-ref variables
+  select(-height_age_percentile:-weight_height_zscore, # Drop other biometrics
+         -caseid,-midx,-hh_num,-cluster_hh_num,  # Drop cross-ref variables
          -wealth_index)  # wealth_score is more informative
 
 
 ###############################################################################
-# Which variables have a lot of missing values? (Re-use LAPOP code)
+# Which variables have a lot of missing values? 
 ###############################################################################
 
 nm <- is.na(my_kids) %>% colSums() %>% sort(decreasing=TRUE)
@@ -95,26 +95,35 @@ head(nm,15)
 # TODO: Something's not right with dietary diversity; check Nada's code
 
 #### What's going on with the missing diet variables?
-cor(is.na(my_kids$child_tubers),is.na(my_kids$child_milk))
+cor(is.na(my_kids$diet_tubers),is.na(my_kids$diet_milk))
 # Missing for the same kids
-cor(is.na(my_kids$child_tubers),my_kids$wealth_score)
+cor(is.na(my_kids$diet_tubers),my_kids$wealth_score)
 # No wealth correlation
-my_kids %>% mutate(food_na=is.na(child_tubers)) %>%
+my_kids %>% mutate(food_na=is.na(diet_tubers)) %>%
   adm2_map(.,'food_na')
 # No obvious geographic pattern
 # I think (tentatively) that it's safe to impute these
 
-# Remove variables that are missing a lot
-my_kids <- 
+#### Similar sanity checks on maternal height/age
+cor(is.na(my_kids$diet_tubers),is.na(my_kids$mother_height_age_zscore))
+# No correlation with missing diet info
+cor(my_kids$wealth_score,is.na(my_kids$mother_height_age_zscore))
+# No correlation with wealth
+my_kids %>% mutate(mom_na=is.na(mother_height_age_zscore)) %>%
+  adm2_map(.,'mom_na')
+# More common in a few districts, but not a striking pattern
+# Impute these as well
 
+# Remove variables that are missing a lot
+my_kids <- my_kids %>% select(-has_soap,-kitchen)
+
+###############################################################################
+# Strongest 1-to-1 correlations? (Prior to any imputation)
+###############################################################################
 
 
 ###############################################################################
 # Use multiple imputation to fill in missing values
-###############################################################################
-
-###############################################################################
-# Strongest 1-to-1 correlations?
 ###############################################################################
 
 ###############################################################################
