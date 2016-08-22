@@ -184,6 +184,7 @@ nrow(na.omit(my_kids)) / nrow(my_kids) # only 34% have no missing values
 
 # split into train/test before imputation
 library(caret)
+set.seed(12345) # imputation of test set fails for some random seed values
 Train <- createDataPartition(my_kids$stunted,p=0.75)[[1]]
 training <- my_kids[Train,]
 testing <- my_kids[-Train,]
@@ -192,12 +193,12 @@ testing <- my_kids[-Train,]
 # *except* stunting.
 pm <- 1 - diag(ncol(my_kids))
 pm[,which(names(my_kids)=='stunting')] <- 0
-train_imp <- mice(training,predictorMatrix=pm)
-test_imp <- mice(testing,predictorMatrix=pm)
+train_imp <- mice(training,predictorMatrix=pm,seed=123)
+test_imp <- mice(testing,predictorMatrix=pm,seed=123)
 
 (complete(train_imp,1) %>% na.omit %>% nrow) / (complete(train_imp,1) %>% nrow)
 (complete(test_imp,1) %>% na.omit %>% nrow) / (complete(test_imp,1) %>% nrow)
-# now ~60% complete
+# now ~59% complete
 
 train_imp1 <- complete(train_imp,1) %>% na.omit 
 test_imp1 <- complete(test_imp,1) %>% na.omit 
@@ -215,36 +216,53 @@ test_imp1$water_treat_filter <- as.numeric(test_imp1$water_treat_filter)
 test_imp1$water_treat_solar <- as.numeric(test_imp1$water_treat_solar)
 test_imp1$water_treat_settle <- as.numeric(test_imp1$water_treat_settle)
 res1 <- data.frame(actual=test_imp1$stunted,pred=predict(fit1,test_imp1))
-# rank-deficient prediction -- what does this mean? how do I fix it?
+# Model is rank deficient -- I may want to take some variables out.
+summary(fit1) # highlights a few variables for which estimates weren't made
+
 ggplot(res1,aes(pred,actual)) +
   geom_jitter(color='tomato',size=2,alpha=0.1,width=0,height=0.4) +
   geom_smooth(method = "glm", method.args = list(family = "binomial")) +
   theme_classic()
 # Pseudo-R2
 library(pscl)
-pR2(fit1)   # McFadden pseudo-R^2 = 0.15
+pR2(fit1)   # McFadden pseudo-R^2 ~ 0.15
 # AUC
 library(pROC)
 r <- roc(res1$actual,res1$pred)
-plot(r) # AUC = 0.6984; I'd like to see it closer to 0.8
+plot(r) # AUC = 0.68; I'd like to see it closer to 0.8
 
 ###############################################################################
 # Try stepwise regression to shorten my variable list
 ###############################################################################
 library(MASS)
 step1 <- stepAIC(fit1) # good to do this with other imputed sets as well
-fit2 <- glm(stunted ~ interview_date_cmc + dob_cmc + sex + mother_height_age_zscore + 
-              mother_ed_year + diet_milk + diet_tubers + diet_eggs + diet_veg_dark_green + 
-              diet_fruit_other + birth_interval_preceding + birth_order + 
-              stunt_geo + num_under5 + electricity + water_treat_settle + 
-              wealth_score + water_open + toilet_bush + toilet_flush,
-            data=train_imp1)
+train_imp2 <- complete(train_imp,2) %>% na.omit 
+step2 <- glm(stunted ~ .,data=train_imp2) %>% stepAIC()
+train_imp3 <- complete(train_imp,3) %>% na.omit 
+step3 <- glm(stunted ~ .,data=train_imp3) %>% stepAIC()
+train_imp4 <- complete(train_imp,4) %>% na.omit 
+step4 <- glm(stunted ~ .,data=train_imp4) %>% stepAIC()
+train_imp5 <- complete(train_imp,5) %>% na.omit 
+step5 <- glm(stunted ~ .,data=train_imp5) %>% stepAIC()
+# consolidate into a consensus list of variables that appear in step1-5
+f <- function(x) x$model %>% names
+var_list <- c(f(step1),f(step2),f(step3),f(step4),f(step5)) %>% 
+  table %>% 
+  as.data.frame %>% 
+  arrange(desc(Freq))
+
+form <- var_list$.[var_list$. != 'stunted'] %>% as.character %>% 
+  paste(collapse=' + ') %>% paste('stunted ~ ',.) %>% as.formula
+
+fit_new <- glm(form,data=train_imp1)
 # no more complaints about rank deficiency
 res2 <- data.frame(actual=test_imp1$stunted,pred=predict(fit2,test_imp1))
 r <- roc(res2$actual,res2$pred)
 plot(r) # AUC = 0.7 -- cutting down on variables actually improves things a little
 
-## Random forest
+###############################################################################
+# Keep my best model so far up here; put others down in odds and ends
+###############################################################################
 
 train_label <- train_imp1 %>%
   mutate(outcome=ifelse(stunted,'T','F') %>% as.factor) %>%
@@ -254,14 +272,189 @@ test_label <- test_imp1 %>%
   dplyr::select(-stunted,-cluster_num)
 
 library(caret)
-rf_model <- train(outcome~.,train_label,
-                 metric='Accuracy') # random forest by default
-# started at 
+
+ctrl <- trainControl(classProbs = TRUE,
+                     summaryFunction = twoClassSummary)
+
+# add some basic pre-processing (no imputation or PCA yet)
+rf_model2 <- train(outcome~.,
+                  data=train_label,
+                  metric='ROC',
+                  method='rf',
+                  trControl=ctrl,
+                  preProc = c("zv","center", "scale"))
+rfClasses2 <- predict(rf_model2, newdata = test_label)
+confusionMatrix(data = rfClasses2, test_label$outcome)
+# accuracy = 0.7419, but my 95% CI still doesn't do it.
+
+# try variable lists from MASS
+form_1 <- var_list$.[var_list$. != 'stunted'] %>% as.character %>% 
+  paste(collapse=' + ') %>% paste('outcome ~ ',.) %>% as.formula
+rf_mass_vars1 <- train(form_1,
+                      data=train_label,
+                      metric='Accuracy',
+                      method='rf',
+                      trControl=ctrl,
+                      preProc = c("zv","center", "scale"))
+rf_mass_classes1 <- predict(rf_mass_vars1, newdata = test_label)
+confusionMatrix(data = rf_mass_classes1, test_label$outcome)
+# accuracy = 0.7419; same accuracy as before with fewer variables
+# adding more variables doesn't seem to help, but in the end I might
+# replace some of these with others that provide more interpretability
+
+# Things I tried that didn't help:
+#    removing some preprocessing steps
+#    adjusting model parameters with tuneLength=20
+#    combine water source, toilet type, toilet cleanliness, cow-related 
+#      into single variables
+
+
+
+
+
+
+#    combine toilet cleanliness variables into a single index
+train_label %>% filter(toilet_clean_dry==1) %>% summarise(x=mean(outcome=='T')) # 0.255137
+train_label %>% filter(toilet_clean_urine==1) %>% summarise(x=mean(outcome=='T')) # 0.3497191
+train_label %>% filter(toilet_clean_flies==1) %>% summarise(x=mean(outcome=='T')) # 0.3213675
+
+#    instead of specifying a tolerance on stunt_geo, just use the avg values 
+#    and let the rf code find a suitable cutoff
+
+#    do I have anything about the interview date in there? not in MASS results
+# Things I haven't included at all (as far as I remember)
+#    floor/wall/roof materials
+#    cooking fuels
+#    mosquito nets
+#    iodine test?
+#    
+
 
 ###############################################################################
 # Odds and ends below here
 ###############################################################################
 
+########### ML models that didn't perform as well as my best choice so far
+system.time(
+  rf_model <- train(outcome~.,
+                    data=train_label,
+                    metric='ROC',
+                    method='rf',
+                    trControl=ctrl))
+# best ROC = 0.753; took ~7 min
+rfClasses <- predict(rf_model, newdata = test_label)
+confusionMatrix(data = rfClasses, test_label$outcome)
+# accuracy = 0.7323
+# so the 95% confidence interval on accuracy still contains the no-information
+# rate... I can't say definitively that this works (yet).
+
+# add PCA
+rf_model3 <- train(outcome~.,
+                   data=train_label,
+                   metric='ROC',
+                   method='rf',
+                   trControl=ctrl,
+                   preProc = c("zv","center", "scale",'pca'))
+rfClasses3 <- predict(rf_model3, newdata = test_label)
+confusionMatrix(data = rfClasses3, test_label$outcome)
+# accuracy = 0.7094; PCA makes things worse than the NIR.
+
+# add knn imputation
+rf_model4 <- train(outcome~.,
+                   data=train_label,
+                   metric='ROC',
+                   method='rf',
+                   trControl=ctrl,
+                   preProc = c("zv","center", "scale",'knnImpute'))
+rfClasses4 <- predict(rf_model4, newdata = test_label)
+confusionMatrix(data = rfClasses4, test_label$outcome)
+# accuracy = 0.7342; knn imputation also doesn't help
+
+# I've also heard good things about Gradient-Boosted Machines...
+system.time(
+  gbm_model <- train(outcome~.,
+                     data=train_label,
+                     metric='ROC',
+                     method='gbm',
+                     trControl=ctrl,
+                     preProc = c("zv","center", "scale"),
+                     verbose=FALSE))
+# finished in 45s
+gbmClasses <- predict(gbm_model, newdata = test_label)
+confusionMatrix(data = gbmClasses, test_label$outcome)
+# accuracy = 0.7323; doesn't beat random forests
+
+# also maybe try svm or nnet?
+system.time(
+  svm_model <- train(outcome~.,
+                     data=train_label,
+                     metric='Accuracy',
+                     method='lssvmRadial',
+                     preProc = c("zv","center", "scale")))
+# took 87s
+# FWIW, lssvmLinear and lssvmPoly crashed.
+svmClasses <- predict(svm_model, newdata = test_label)
+confusionMatrix(data = svmClasses, test_label$outcome)
+# accuracy = 0.7075; worse than NIR
+
+# try only the variables present in all 5 MASS results
+form_5 <- var_list$.[var_list$. != 'stunted' & var_list$Freq == 5] %>% 
+  as.character %>% paste(collapse=' + ') %>% paste('outcome ~ ',.) %>% 
+  as.formula
+rf_mass_vars5 <- train(form_5,
+                       data=train_label,
+                       metric='Accuracy',
+                       method='rf',
+                       trControl=ctrl,
+                       preProc = c("zv","center", "scale"))
+rf_mass_classes5 <- predict(rf_mass_vars5, newdata = test_label)
+confusionMatrix(data = rf_mass_classes5, test_label$outcome)
+# accuracy = 0.7323; not an improvement
+
+# try adding some of the strong pairwise correlates back in
+add_back <- c('electricity','water_treat_boil','urban','water_piped',
+              'water_treat','toilet_bush','toilet_flush','toilet_clean_urine',
+              'water_spring','mother_ed_level','age_calc_months','WDDS_total')
+form_add <- var_list$.[var_list$. != 'stunted'] %>% as.character %>%
+  c(add_back) %>% paste(collapse=' + ') %>% paste('outcome ~ ',.) %>% 
+  as.formula
+rf_mass_vars_add <- train(form_add,
+                          data=train_label,
+                          method='rf',
+                          trControl=ctrl,
+                          preProc = c("zv","center", "scale"))
+rf_mass_classes_add <- predict(rf_mass_vars_add, newdata = test_label)
+confusionMatrix(data = rf_mass_classes_add, test_label$outcome)
+# No improvement in accuracy
+
+nn_mass_vars1 <- train(form_1,
+                       data=train_label,
+                       metric='Accuracy',
+                       method='nnet',
+                       trControl=ctrl,
+                       preProc = c("zv","center", "scale"),
+                       tuneLength=20)
+nn_mass_classes1 <- predict(nn_mass_vars1, newdata = test_label)
+confusionMatrix(data = nn_mass_classes1, test_label$outcome)
+# accuracy = 0.7189; doesn't beat RF. Took forever to run.
+
+# if rf works well, maybe I should try similar methods:
+# Boruta, cforest, extraTrees, ORFlog (and related), QRF, ranger, rrf, wsrf
+# TODO: factor out a function to test all of these with the same options
+
+test_model <- function(method,preProc=c('zv','center','scale')) {
+  # Try out different ML models with default parameters to see what can
+  # work the best with the data I've got
+  my_model <- train(outcome~.,
+                    data=train_label,
+                    metric='Accuracy',
+                    method=method,
+                    preProc = preProc)
+  my_classes <- predict(my_model, newdata = test_label)
+  confusionMatrix(data = my_classes, test_label$outcome)
+}
+
+############################################
 
 # First, use logistic regression to see what looks important
 kids_reg <- my_kids %>%
