@@ -2,85 +2,132 @@
 # models (and feature sets) using caret to see how well it 
 # can be predicted.
 
+#### Note 29 August 2016:
+# I think I'm going to tie this one off. After spending a *lot* of time on
+# feature engineering and tweaking model parameters, variable selection, and
+# pre-processing steps, I've succeeded in getting one case of mediocre 
+# statistical significance (which you'll find below). I think it's safe to 
+# say that the available data (at least the cleaned variables from the
+# household and kids modules) might be good enough for a correlative analysis,
+# but not for a predictive one. 
+#
+# If we want to keep pushing for a predictive model, the best bet might be
+# to boost the amount of data included by adding in DHS results from previous
+# years and/or other Great Lakes countries. On their own, though, the Rwanda 
+# data don't support this kind of model building.
+
 source('R/01_RW_cleanDHS.R') # load and clean hh data
 source('R/04_RW_cleanDHS_kids.R') # load Nada's work so far
 source('R/simple_plots.R')
-# most importantly, this creates the data frames kids_clean 
-# and kids_diet
 
 my_kids <- kids_clean %>% 
   mutate(stunted = as.numeric(height_age_zscore < -2))
 
 ###############################################################################
-# Add binary variable for high-stunting districts
+# Create a set of binary variables for each district and province.
 ###############################################################################
-tmp <- my_kids[,c('cluster_num','stunted')] %>% 
-  na.omit() %>%
-  mutate(val=stunted) %>% 
-  plyr::join(geo_clean,by='cluster_num') %>%
-  group_by(district) %>%
-  dplyr::summarise(yes=sum(val==1),no=sum(val==0)) 
-
-fisher_pval <- function(i) {
-  ft <- rbind(tmp[i,c('yes','no')],
-              tmp[-i,c('yes','no')] %>% colSums()) %>%
-    as.matrix() %>%
-    fisher.test(alternative='greater')
-  ft$p.value
+j <- plyr::join(my_kids,geo_clean,by='cluster_num')
+for (p in j$province %>% as.character %>% unique) {
+  n <- p %>% sub(' ','_',.) %>% paste("prov_",.,sep='')
+  my_kids[,n] <- as.numeric(as.character(j$province) == p)
 }
-
-tmp <- tmp %>%
-  mutate(mean=yes/(yes+no),
-         pval=sapply(1:nrow(tmp),fisher_pval),
-         sig=as.numeric(pval < 0.1/nrow(tmp)))
-# # Visualization: average stunting rates all over
-# my_kids %>% adm2_map('stunted')
-# # just pick out the really high ones
-# tmp %>%
-#   mutate(val=sig,NAME_2=as.character(district)) %>%
-#   make_map(low_color='ivory',high_color='firebrick1')
-# tmp %>% filter(sig==TRUE)
-
-# create a new feature corresponding to these four districts
-j <- join(kids_clean,geo_clean,by='cluster_num') %>%
-  join(tmp,by='district') 
-my_kids$stunt_geo <- j$sig  
-
-rm(tmp,j)
+for (d in j$district  %>% as.character %>% unique) {
+  n <- d %>% sub(' ','_',.) %>% paste("dist_",.,sep='')
+  my_kids[,n] <- as.numeric(as.character(j$district) == d)
+}
 
 ###############################################################################
 # Add relevant household-level variables
 ###############################################################################
 kids_add_hh <- kids_clean %>%
-  dplyr::select(-wealth_index,-cluster_num,-hh_num) %>%
+  dplyr::select(cluster_hh_num) %>%
   join(hh_clean,by='cluster_hh_num') %>%
-  dplyr::select(num_hh,num_under5,urban,water_source,toilet_type,
-                electricity,age_head,share_toilet,
-                water_treat:water_treat_settle,has_soap,toilet_clean_dry,
-                toilet_clean_urine,toilet_clean_flies,wealth_score,kitchen,
-                ag_land,livestock:bull) %>%
-  # add binary variables for most prominent
-  mutate(water_prot_spring = as.numeric(water_source==41),
-         water_standpipe = as.numeric(water_source==13),
-         water_spring = as.numeric(water_source==42),
-         water_open = as.numeric(water_source==43),
-         water_piped = as.numeric(water_source==12),
+  dplyr::select(-cluster_hh_num,-hhid,-cluster_num,-hh_num,-hh_weight,
+                -interviewer_id,-sample_strata,-province_id,-district_id,
+                -rural) %>%
+  # add binary variables for categorical
+  mutate(# water sources
          water_indoor = as.numeric(water_source==11),
+         water_piped = as.numeric(water_source==12),
+         water_standpipe = as.numeric(water_source==13),
+         water_borehole = as.numeric(water_source==21),
+         water_well_prot = as.numeric(water_source==31),
+         water_well_unprot = as.numeric(water_source==32),
+         water_spring_prot = as.numeric(water_source==41),
+         water_spring_unprot = as.numeric(water_source==42),
+         water_open = as.numeric(water_source==43),
+         water_rain = as.numeric(water_source==51),
+         water_cart = as.numeric(water_source==62),
+         # toilet types
+         toilet_flush = as.numeric(toilet_type < 16),
+         toilet_vip = as.numeric(toilet_type==21),
          toilet_pit_slab = as.numeric(toilet_type==22),
          toilet_pit_open = as.numeric(toilet_type==23),
-         toilet_vip = as.numeric(toilet_type==21),
          toilet_bush = as.numeric(toilet_type==31),
-         toilet_flush = as.numeric(toilet_type < 16)) %>%
-  dplyr::select(-water_source,-toilet_type)
+         toilet_composting = as.numeric(toilet_type==41),
+         # floor materials
+         floor_earth = as.numeric(floor_material==11),
+         floor_dung = as.numeric(floor_material==12),
+         floor_tiles = as.numeric(floor_material==33),
+         floor_cement = as.numeric(floor_material==34),
+         floor_carpet = as.numeric(floor_material==35),
+         # wall materials 
+         wall_cane = as.numeric(wall_material == 12),
+         wall_dirt = as.numeric(wall_material == 13),
+         wall_bamboo_mud = as.numeric(wall_material == 21),
+         wall_stone_mud = as.numeric(wall_material == 22),
+         wall_adobe_uncovered = as.numeric(wall_material == 23),
+         wall_wood_reused = as.numeric(wall_material == 26),
+         wall_cement = as.numeric(wall_material == 31),
+         wall_stone_lime = as.numeric(wall_material == 32),
+         wall_bricks = as.numeric(wall_material == 33),
+         wall_cement_blocks = as.numeric(wall_material == 34),
+         wall_adobe_covered = as.numeric(wall_material == 35),
+         wall_wood_planks = as.numeric(wall_material == 36),
+         # roof materials
+         roof_simple = as.numeric(roof_material %in% c(11,12,13,21)),
+         roof_tile = as.numeric(roof_material==34),
+         roof_bamboo = as.numeric(roof_material==22),
+         roof_metal = as.numeric(roof_material==31),
+         roof_nice = as.numeric(roof_material %in% c(23,35,36,32,33)),
+         # cooking fuel
+         fuel_advanced = as.numeric(cooking_fuel %in% c(1,3,4,5)),
+         fuel_charcoal = as.numeric(cooking_fuel == 7),
+         fuel_wood = as.numeric(cooking_fuel == 8),
+         fuel_straw = as.numeric(cooking_fuel == 9),
+         fuel_ag_waste = as.numeric(cooking_fuel %in% c(10,11)),
+         # adult structure
+         adult_one = as.numeric(adult_structure == 1),
+         adult_hetero = as.numeric(adult_structure == 2),
+         adult_samesex = as.numeric(adult_structure == 3),
+         adult_threeplus = as.numeric(adult_structure == 4),
+         adult_unrelated = as.numeric(adult_structure == 5),
+         # use mosquito net
+         mosquito_none = as.numeric(use_mosquito_net %in% c(0,3)),
+         mosquito_all = as.numeric(use_mosquito_net == 1),
+         mosquito_some = as.numeric(use_mosquito_net == 2),
+         # handwashing site
+         handwashing_obs = as.numeric(handwashing_site == 1),
+         handwashing_nid = as.numeric(handwashing_site == 2),
+         handwashing_nop = as.numeric(handwashing_site == 3),
+         handwashing_nobs = as.numeric(handwashing_site == 4)) %>%
+  dplyr::select(-water_source,-toilet_type,-floor_material,-wall_material,
+                -wealth_index,-roof_material,-cooking_fuel,-adult_structure,
+                -use_mosquito_net,-handwashing_site)
 
 my_kids <- cbind(my_kids,kids_add_hh)
 
-
 my_kids <- my_kids %>% 
   select(-height_age_percentile:-weight_height_zscore, # Drop other biometrics
-         -caseid,-midx,-hh_num,-cluster_hh_num,  # Drop cross-ref variables
-         -wealth_index)  # wealth_score is more informative
+         -caseid,-midx,-hh_num,-cluster_hh_num,-male_weight,# Drop cross-ref variables
+         -wealth_index, # wealth_score is better
+         -diet_meat_organ,-diet_eggs,-diet_veg_dark_green, # not linearly independent
+         -diet_fruit_other,-diet_legumes_nuts,-diet_milk,-motorboat)  
 
+# make factor variables numeric
+for (n in names(my_kids)) {
+  my_kids[,n] <- as.numeric(my_kids[,n])
+}
 
 ###############################################################################
 # Which variables have a lot of missing values? 
@@ -89,7 +136,6 @@ my_kids <- my_kids %>%
 nm <- is.na(my_kids) %>% colSums() %>% sort(decreasing=TRUE)
 nm <- nm / nrow(my_kids)
 head(nm,15)
-# TODO: Something's not right with dietary diversity; check Nada's code
 
 #### What's going on with the missing diet variables?
 cor(is.na(my_kids$diet_tubers),is.na(my_kids$diet_milk))
@@ -112,18 +158,17 @@ my_kids %>% mutate(mom_na=is.na(mother_height_age_zscore)) %>%
 # Impute these as well
 
 # Remove variables that are missing a lot
-my_kids <- my_kids %>% select(-has_soap,-kitchen)
+my_kids <- my_kids %>% select(-handwashing_water,-has_soap,-kitchen)
 
 ###############################################################################
 # Strongest 1-to-1 correlations? (Prior to any imputation)
 ###############################################################################
 
-# TODO: I don't know why this didn't get fixed in 04_RW_cleanDHS_kids.R
 my_kids$diet_other_food <- na_if(my_kids$diet_other_food,8)
 my_kids$diet_meat <- na_if(my_kids$diet_meat,8)
 my_kids$wealth_score <- my_kids$wealth_score/1e5
 
-# First, which variables take only two unique values
+# First, which variables take only two unique values?
 num_responses <- data.frame(name=names(my_kids),
                             num=sapply(names(my_kids), function(x) 
                               my_kids[,x] %>% na.omit %>% unique %>% length),
@@ -180,7 +225,7 @@ scale_vars <- scale_vars %>% arrange(pval)
 # No sense in imputing stunting; will just muddy the waters later on
 my_kids <- my_kids %>% filter(!is.na(stunted))
 
-nrow(na.omit(my_kids)) / nrow(my_kids) # only 34% have no missing values
+nrow(na.omit(my_kids)) / nrow(my_kids) # only 19% have no missing values
 
 # split into train/test before imputation
 library(caret)
@@ -193,49 +238,18 @@ testing <- my_kids[-Train,]
 # *except* stunting.
 pm <- 1 - diag(ncol(my_kids))
 pm[,which(names(my_kids)=='stunting')] <- 0
+
 train_imp <- mice(training,predictorMatrix=pm,seed=123)
-test_imp <- mice(testing,predictorMatrix=pm,seed=123)
+test_imp <- mice(testing,predictorMatrix=pm,seed=123) 
 
-(complete(train_imp,1) %>% na.omit %>% nrow) / (complete(train_imp,1) %>% nrow)
-(complete(test_imp,1) %>% na.omit %>% nrow) / (complete(test_imp,1) %>% nrow)
-# now ~59% complete
-
-train_imp1 <- complete(train_imp,1) %>% na.omit 
-test_imp1 <- complete(test_imp,1) %>% na.omit 
+train_imp1 <- complete(train_imp,1) 
+test_imp1 <- complete(test_imp,1) 
 
 ###############################################################################
-# Logistic regression
-###############################################################################
-
-fit1 <- glm(stunted ~ .,data=train_imp1) 
-# TODO: this is klugy -- find a brief way to make them all numeric
-test_imp1$water_treat_boil <- as.numeric(test_imp1$water_treat_boil)
-test_imp1$water_treat_bleach <- as.numeric(test_imp1$water_treat_bleach)
-test_imp1$water_treat_cloth <- as.numeric(test_imp1$water_treat_cloth)
-test_imp1$water_treat_filter <- as.numeric(test_imp1$water_treat_filter)
-test_imp1$water_treat_solar <- as.numeric(test_imp1$water_treat_solar)
-test_imp1$water_treat_settle <- as.numeric(test_imp1$water_treat_settle)
-res1 <- data.frame(actual=test_imp1$stunted,pred=predict(fit1,test_imp1))
-# Model is rank deficient -- I may want to take some variables out.
-summary(fit1) # highlights a few variables for which estimates weren't made
-
-ggplot(res1,aes(pred,actual)) +
-  geom_jitter(color='tomato',size=2,alpha=0.1,width=0,height=0.4) +
-  geom_smooth(method = "glm", method.args = list(family = "binomial")) +
-  theme_classic()
-# Pseudo-R2
-library(pscl)
-pR2(fit1)   # McFadden pseudo-R^2 ~ 0.15
-# AUC
-library(pROC)
-r <- roc(res1$actual,res1$pred)
-plot(r) # AUC = 0.68; I'd like to see it closer to 0.8
-
-###############################################################################
-# Try stepwise regression to shorten my variable list
+# Use stepwise regression to shorten my variable list
 ###############################################################################
 library(MASS)
-step1 <- stepAIC(fit1) # good to do this with other imputed sets as well
+step1 <- glm(stunted ~ .,data=train_imp1) %>% stepAIC()
 train_imp2 <- complete(train_imp,2) %>% na.omit 
 step2 <- glm(stunted ~ .,data=train_imp2) %>% stepAIC()
 train_imp3 <- complete(train_imp,3) %>% na.omit 
@@ -251,17 +265,40 @@ var_list <- c(f(step1),f(step2),f(step3),f(step4),f(step5)) %>%
   as.data.frame %>% 
   arrange(desc(Freq))
 
-form <- var_list$.[var_list$. != 'stunted'] %>% as.character %>% 
-  paste(collapse=' + ') %>% paste('stunted ~ ',.) %>% as.formula
-
-fit_new <- glm(form,data=train_imp1)
-# no more complaints about rank deficiency
-res2 <- data.frame(actual=test_imp1$stunted,pred=predict(fit2,test_imp1))
-r <- roc(res2$actual,res2$pred)
-plot(r) # AUC = 0.7 -- cutting down on variables actually improves things a little
+#### Look at common variable distributions with a box plot
+df <- my_kids[,var_list$.[var_list$. != 'stunted' & var_list$Freq==5] %>% as.character]
+ggplot(melt(df),aes(variable,value)) +
+  geom_boxplot() + coord_flip()
 
 ###############################################################################
-# Keep my best model so far up here; put others down in odds and ends
+# Try visualizing with PCA
+###############################################################################
+scale1 <- rbind(test_imp1,train_imp1) %>% scale_vars
+ggplot(melt(scale1),aes(variable,value)) +
+  geom_boxplot() + coord_flip()
+
+pca1 <- prcomp(scale1)
+summary(pca1)
+plot(pca1)
+# Out of 45 PCs, it takes the first 32 to get to 90% variance. Doesn't augur
+# well for the usefulness of PCA here.
+
+pca1_lab <- pca1$x %>% as.data.frame %>%
+  mutate(stunted=c(test_label$outcome,train_label$outcome) %>% 
+           as.numeric)
+
+glm(stunted ~ .,data=pca1_lab) %>% summary
+
+# strong correlations with some PCs but not others
+ggplot(pca1_lab,aes(x=PC1,y=PC2,color=stunted)) +
+  geom_point()
+ggplot(pca1_lab,aes(x=PC1,y=PC7,color=stunted)) +
+  geom_point()
+# PCA looks well-behaved, but separation isn't great, even with strongly-
+# correlated dimensions.
+
+###############################################################################
+# Best ML model so far
 ###############################################################################
 
 train_label <- train_imp1 %>%
@@ -276,292 +313,63 @@ library(caret)
 ctrl <- trainControl(classProbs = TRUE,
                      summaryFunction = twoClassSummary)
 
-# add some basic pre-processing (no imputation or PCA yet)
-rf_model2 <- train(outcome~.,
-                  data=train_label,
-                  metric='ROC',
-                  method='rf',
-                  trControl=ctrl,
-                  preProc = c("zv","center", "scale"))
-rfClasses2 <- predict(rf_model2, newdata = test_label)
-confusionMatrix(data = rfClasses2, test_label$outcome)
-# accuracy = 0.7419, but my 95% CI still doesn't do it.
+# Fit a random forest model to subsets of the variable lists from MASS
+#  67 appear >=1 times: accuracy = 0.723
+#  55 appear >=2 times: accuracy = 0.7083
+#  53 appear >=3 times: accuracy = 0.7242
+#  48 appear >=4 times: accuracy = 0.7253
+#  46 appear 5 times: accuracy = 0.7344 (p=0.0205)
+# This looks OK, but it's also kind of p-hacked, since I've tried
+# lots of different versions of this.
 
-# try variable lists from MASS
-form_1 <- var_list$.[var_list$. != 'stunted'] %>% as.character %>% 
-  paste(collapse=' + ') %>% paste('outcome ~ ',.) %>% as.formula
-rf_mass_vars1 <- train(form_1,
-                      data=train_label,
-                      metric='Accuracy',
-                      method='rf',
-                      trControl=ctrl,
-                      preProc = c("zv","center", "scale"))
-rf_mass_classes1 <- predict(rf_mass_vars1, newdata = test_label)
-confusionMatrix(data = rf_mass_classes1, test_label$outcome)
-# accuracy = 0.7419; same accuracy as before with fewer variables
-# adding more variables doesn't seem to help, but in the end I might
-# replace some of these with others that provide more interpretability
-
-# Things I tried that didn't help:
-#    removing some preprocessing steps
-#    adjusting model parameters with tuneLength=20
-#    combine water source, toilet type, toilet cleanliness, cow-related 
-#      into single variables
-
-
-
-
-
-
-#    combine toilet cleanliness variables into a single index
-train_label %>% filter(toilet_clean_dry==1) %>% summarise(x=mean(outcome=='T')) # 0.255137
-train_label %>% filter(toilet_clean_urine==1) %>% summarise(x=mean(outcome=='T')) # 0.3497191
-train_label %>% filter(toilet_clean_flies==1) %>% summarise(x=mean(outcome=='T')) # 0.3213675
-
-#    instead of specifying a tolerance on stunt_geo, just use the avg values 
-#    and let the rf code find a suitable cutoff
-
-#    do I have anything about the interview date in there? not in MASS results
-# Things I haven't included at all (as far as I remember)
-#    floor/wall/roof materials
-#    cooking fuels
-#    mosquito nets
-#    iodine test?
-#    
-
-
-###############################################################################
-# Odds and ends below here
-###############################################################################
-
-########### ML models that didn't perform as well as my best choice so far
-system.time(
-  rf_model <- train(outcome~.,
-                    data=train_label,
-                    metric='ROC',
-                    method='rf',
-                    trControl=ctrl))
-# best ROC = 0.753; took ~7 min
-rfClasses <- predict(rf_model, newdata = test_label)
-confusionMatrix(data = rfClasses, test_label$outcome)
-# accuracy = 0.7323
-# so the 95% confidence interval on accuracy still contains the no-information
-# rate... I can't say definitively that this works (yet).
-
-# add PCA
-rf_model3 <- train(outcome~.,
-                   data=train_label,
-                   metric='ROC',
-                   method='rf',
-                   trControl=ctrl,
-                   preProc = c("zv","center", "scale",'pca'))
-rfClasses3 <- predict(rf_model3, newdata = test_label)
-confusionMatrix(data = rfClasses3, test_label$outcome)
-# accuracy = 0.7094; PCA makes things worse than the NIR.
-
-# add knn imputation
-rf_model4 <- train(outcome~.,
-                   data=train_label,
-                   metric='ROC',
-                   method='rf',
-                   trControl=ctrl,
-                   preProc = c("zv","center", "scale",'knnImpute'))
-rfClasses4 <- predict(rf_model4, newdata = test_label)
-confusionMatrix(data = rfClasses4, test_label$outcome)
-# accuracy = 0.7342; knn imputation also doesn't help
-
-# I've also heard good things about Gradient-Boosted Machines...
-system.time(
-  gbm_model <- train(outcome~.,
-                     data=train_label,
-                     metric='ROC',
-                     method='gbm',
-                     trControl=ctrl,
-                     preProc = c("zv","center", "scale"),
-                     verbose=FALSE))
-# finished in 45s
-gbmClasses <- predict(gbm_model, newdata = test_label)
-confusionMatrix(data = gbmClasses, test_label$outcome)
-# accuracy = 0.7323; doesn't beat random forests
-
-# also maybe try svm or nnet?
-system.time(
-  svm_model <- train(outcome~.,
-                     data=train_label,
-                     metric='Accuracy',
-                     method='lssvmRadial',
-                     preProc = c("zv","center", "scale")))
-# took 87s
-# FWIW, lssvmLinear and lssvmPoly crashed.
-svmClasses <- predict(svm_model, newdata = test_label)
-confusionMatrix(data = svmClasses, test_label$outcome)
-# accuracy = 0.7075; worse than NIR
-
-# try only the variables present in all 5 MASS results
-form_5 <- var_list$.[var_list$. != 'stunted' & var_list$Freq == 5] %>% 
+form_5 <- var_list$.[var_list$. != 'stunted' & var_list$Freq==5] %>% 
   as.character %>% paste(collapse=' + ') %>% paste('outcome ~ ',.) %>% 
   as.formula
 rf_mass_vars5 <- train(form_5,
                        data=train_label,
-                       metric='Accuracy',
+                       metric='ROC',
                        method='rf',
                        trControl=ctrl,
                        preProc = c("zv","center", "scale"))
 rf_mass_classes5 <- predict(rf_mass_vars5, newdata = test_label)
 confusionMatrix(data = rf_mass_classes5, test_label$outcome)
-# accuracy = 0.7323; not an improvement
 
-# try adding some of the strong pairwise correlates back in
-add_back <- c('electricity','water_treat_boil','urban','water_piped',
-              'water_treat','toilet_bush','toilet_flush','toilet_clean_urine',
-              'water_spring','mother_ed_level','age_calc_months','WDDS_total')
-form_add <- var_list$.[var_list$. != 'stunted'] %>% as.character %>%
-  c(add_back) %>% paste(collapse=' + ') %>% paste('outcome ~ ',.) %>% 
-  as.formula
-rf_mass_vars_add <- train(form_add,
-                          data=train_label,
-                          method='rf',
-                          trControl=ctrl,
-                          preProc = c("zv","center", "scale"))
-rf_mass_classes_add <- predict(rf_mass_vars_add, newdata = test_label)
-confusionMatrix(data = rf_mass_classes_add, test_label$outcome)
-# No improvement in accuracy
-
-nn_mass_vars1 <- train(form_1,
-                       data=train_label,
-                       metric='Accuracy',
-                       method='nnet',
-                       trControl=ctrl,
-                       preProc = c("zv","center", "scale"),
-                       tuneLength=20)
-nn_mass_classes1 <- predict(nn_mass_vars1, newdata = test_label)
-confusionMatrix(data = nn_mass_classes1, test_label$outcome)
-# accuracy = 0.7189; doesn't beat RF. Took forever to run.
-
-# if rf works well, maybe I should try similar methods:
-# Boruta, cforest, extraTrees, ORFlog (and related), QRF, ranger, rrf, wsrf
-# TODO: factor out a function to test all of these with the same options
-
-test_model <- function(method,preProc=c('zv','center','scale')) {
-  # Try out different ML models with default parameters to see what can
-  # work the best with the data I've got
-  my_model <- train(outcome~.,
-                    data=train_label,
-                    metric='Accuracy',
-                    method=method,
-                    preProc = preProc)
-  my_classes <- predict(my_model, newdata = test_label)
-  confusionMatrix(data = my_classes, test_label$outcome)
+# Transformations for a few variables that look funny
+# These actually hurt model performance when I tried them out.
+scale_vars <- function(x,more_vars=NULL) {
+  vars <- var_list$.[var_list$. != 'stunted' & var_list$Freq==5] %>% as.character
+  xout <- x[,c(vars,more_vars)]
+  xout$pig <- log10(1+x$pig)
+  xout$sheep <- log10(1+x$sheep)
+  xout$goat <- log10(1+x$goat)
+  xout$birth_order <- log10(x$birth_order)
+  xout$num_kids <- log10(1+x$num_kids)
+  xout$num_under5 <- log10(1+x$num_under5)
+  logscale <- function(y) {
+    log10(1 + y - min(y,na.rm=TRUE)) %>% scale
+  }
+  xout$wealth_score <- logscale(x$wealth_score)
+  xout$mother_height_age_percentile <- 
+    logscale(x$mother_height_age_percentile) %>% logscale
+  for (n in vars) { # don't apply scaling to additional vars
+    xout[,n] <- scale(xout[,n]) %>% as.numeric
+  }
+  xout
 }
 
-############################################
+###############################################################################
+# My list of things that didn't help at all
+###############################################################################
 
-# First, use logistic regression to see what looks important
-kids_reg <- my_kids %>%
-  dplyr::select(sex,mother_ed_level,mother_ed_year,
-         child_milk:child_other_food,birth_interval_preceding,birth_order,
-         age_calc_months,wealth_index,stunted)
-glm(stunted~.,family=binomial(link='logit'),data=kids_reg) %>% summary()
-# sex, child_milk, child_tubers, child_veg_dark_green, child_fruit_other,
-# child_meat_organ, child_legumes_nuts, age_calc_months, wealth_index
+# Using all variables rather than output from stepwise regression in an RF
+# model (takes forever).
 
-library(caret)
+# Using logistic regression to see which of the RHS variables in form_5 
+# correlate most strongly with stunting, and only including those in an RF
+# model.
 
-# simplest feature set -- only wealth quintile matters
-feat1 <- my_kids %>% 
-  dplyr::select(wealth_index,stunted) %>% 
-  na.omit()
+# Transforming data with PCA before running an RF model (made things much 
+# worse).
 
-# first off, how well do we do if we assume no one is stunted?
-sum(feat1$stunted=='F')/sum(!is.na(feat1$stunted))
-# 68.25% accuracy!
-
-train(stunted ~ .,
-      data = feat1,
-      trControl = trainControl(method='cv',number=10),
-      method = "nb")
-# That was useless
-
-feat2 <- my_kids %>% 
-  dplyr::select(sex, child_milk, child_tubers, child_veg_dark_green, 
-                child_fruit_other, child_meat_organ, child_legumes_nuts, 
-                age_calc_months, wealth_index, stunted) %>%
-  na.omit()
-sum(feat2$stunted=='F')/sum(!is.na(feat2$stunted)) # 69.1% null accuracy
-train(stunted ~ .,
-      data = feat2,
-      trControl = trainControl(method='cv',number=10),
-      tuneLength=15,
-      method = "nb") 
-# 69% without tuning. Maybe NB just isn't up to this?
-train(stunted ~ .,
-      data = feat2,
-      trControl = trainControl(method='cv',number=10),
-      method = "svmRadial") 
-# pushes us up to 70% accuracy. Still pretty lame
-train(stunted ~ .,
-      data = feat2,
-      trControl = trainControl(method='cv',number=10),
-      method = "knn",
-      tuneLength=20)
-# still only a tiny improvement
-
-# Let's use some geographic information
-
-feat3 <- my_kids %>% 
-  dplyr::select(sex, child_milk, child_tubers, child_veg_dark_green, 
-                child_fruit_other, child_meat_organ, child_legumes_nuts, 
-                age_calc_months, wealth_index, stunt_geo,
-                stunted) %>%
-  na.omit()
-
-train(stunted ~ .,
-      data = feat3,
-      trControl = trainControl(method='cv',number=10),
-      method = "svmRadial") 
-# this is an improvement over feat2, but only a small one
-
-# add in some household-level variables and see if these help
-
-         
-         
-# TODO: may want to add livestock & ag assets
-feat3 <- cbind(my_kids,kids_add_hh) %>%
-  dplyr::select(stunted, sex, child_milk, child_tubers, child_veg_dark_green, 
-         child_fruit_other, child_meat_organ, child_legumes_nuts, 
-         age_calc_months, wealth_index, stunt_geo,num_hh,num_under5,urban,
-         electricity,age_head,share_toilet,
-         water_treat:water_treat_settle,has_soap,toilet_clean_dry,
-         toilet_clean_urine,toilet_clean_flies,wealth_score,kitchen,
-         ag_land,livestock,water_prot_spring:toilet_flush) 
-
-nrow(na.omit(feat3)) / nrow(feat3) # looks like we'll need imputation
-imp3 <- mice(feat3) # might be better to leave stunting out
-form3 <-  dplyr::select(feat3,-stunted) %>% names() %>% 
-  paste(collapse=' + ') %>% paste('stunted ~ ',.,collapse='')
-fit3 <- with(data=imp3,exp=glm(as.formula(form3),family=binomial(link='logit')))
-summary(fit3) # this actually doesn't summarize very well...
-
-# When we add in more data, some things (like milk consumption) look significant
-# that didn't before. This could also be a result of imputation.
-# Geography seems to matter a lot. Treatment of water with
-# filters seems to hurt. Some of the correlations have directionality
-# that seems counterintuitive, but that can easily happen in a big multiple 
-# regression. 
-
-# What if we just throw everything (from one imputation) in a naive Bayes?
-# (might be more robust to toss them all in)
-feat3_1 <- complete(imp3,1)
-train(stunted ~ .,
-      data = feat3_1,
-      trControl = trainControl(method='cv',number=10),
-      tuneLength=15,
-      method = "nb") 
-# accuracy = 68.9% -- no real improvement
-
-# I think I need to spend some more time exploring and visualizing
-# this data to get a better idea of what's important before throwing
-# everything in a ML model.
-
-
-
+# Other model types: gbm, lssvmRadial, svmRadial, nb, knn, nnet -- none could
+# beat rf
