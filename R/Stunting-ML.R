@@ -314,13 +314,8 @@ ctrl <- trainControl(classProbs = TRUE,
                      summaryFunction = twoClassSummary)
 
 # Fit a random forest model to subsets of the variable lists from MASS
-#  67 appear >=1 times: accuracy = 0.723
-#  55 appear >=2 times: accuracy = 0.7083
-#  53 appear >=3 times: accuracy = 0.7242
-#  48 appear >=4 times: accuracy = 0.7253
-#  46 appear 5 times: accuracy = 0.7344 (p=0.0205)
-# This looks OK, but it's also kind of p-hacked, since I've tried
-# lots of different versions of this.
+# This is my best version; sometimes it's even statistically significant,
+# depending on the random seed. They call that p-hacking where I come from.
 
 form_5 <- var_list$.[var_list$. != 'stunted' & var_list$Freq==5] %>% 
   as.character %>% paste(collapse=' + ') %>% paste('outcome ~ ',.) %>% 
